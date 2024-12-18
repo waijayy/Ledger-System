@@ -1,0 +1,307 @@
+import java.io.FileWriter;
+import java.io.IOException;
+import java.sql.*;
+import java.util.Scanner;
+import java.util.regex.*;
+
+public class LedgerSystem {
+   private static String userName = "";
+   private static int userId;
+   private static final String URL = "jdbc:mysql://localhost:3306/Ledger_System";
+   private static final String USER = "root";
+   private static final String PASSWORD = "";
+
+   public LedgerSystem() {}
+
+   private static boolean validateEmail(String email) {
+      String regex = "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$";
+      return Pattern.compile(regex).matcher(email).matches();
+   }
+
+   private static boolean validatePassword(String password) {
+      return password.length() >= 6 && password.matches(".*[!@#$%^&*(),.?\":{}|<>-].*");
+   }
+
+   private static boolean validateName(String name) {
+      return name.matches("^[a-zA-Z0-9 ]+$");
+   }
+
+   private static void registerUser() {
+      Scanner scanner = new Scanner(System.in);
+      System.out.println("== Please fill in the form ==");
+      System.out.print("Name: ");
+      String name = scanner.nextLine();
+      System.out.print("Email: ");
+      String email = scanner.nextLine();
+      System.out.print("Password: ");
+      String password = scanner.nextLine();
+      System.out.print("Confirm Password: ");
+      String confirmPassword = scanner.nextLine();
+
+      if (!validateName(name)) {
+         System.out.println("Name must be alphanumeric and cannot contain special characters.");
+      } else if (!validateEmail(email)) {
+         System.out.println("Invalid email format.");
+      } else if (!validatePassword(password)) {
+         System.out.println("Password must be at least 6 characters long and contain at least one special character.");
+      } else if (!password.equals(confirmPassword)) {
+         System.out.println("Passwords do not match.");
+      } else {
+         try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD)) {
+            String userQuery = "INSERT INTO Users (name, email, password) VALUES (?, ?, ?)";
+            PreparedStatement userStmt = conn.prepareStatement(userQuery, Statement.RETURN_GENERATED_KEYS);
+            userStmt.setString(1, name);
+            userStmt.setString(2, email);
+            userStmt.setString(3, password);
+            userStmt.executeUpdate();
+
+            ResultSet generatedKeys = userStmt.getGeneratedKeys();
+            if (generatedKeys.next()) {
+               int userId = generatedKeys.getInt(1);
+
+               String balanceQuery = "INSERT INTO Account_Balance (user_id, balance) VALUES (?, 0.00)";
+               PreparedStatement balanceStmt = conn.prepareStatement(balanceQuery);
+               balanceStmt.setInt(1, userId);
+               balanceStmt.executeUpdate();
+               balanceStmt.close();
+            }
+
+            userStmt.close();
+            System.out.println("Register Successful!!!");
+
+         } catch (SQLException e) {
+            System.out.println("Error registering user. Email might already be taken.");
+            e.printStackTrace();
+         }
+      }
+   }
+
+   private static void loginUser() {
+      Scanner scanner = new Scanner(System.in);
+      System.out.println("== Please enter your email and password ==");
+      System.out.print("Email: ");
+      String email = scanner.nextLine();
+      System.out.print("Password: ");
+      String password = scanner.nextLine();
+
+      try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD)) {
+         String query = "SELECT * FROM Users WHERE email = ? AND password = ?";
+         PreparedStatement stmt = conn.prepareStatement(query);
+         stmt.setString(1, email);
+         stmt.setString(2, password);
+
+         ResultSet resultSet = stmt.executeQuery();
+         if (resultSet.next()) {
+            userId = resultSet.getInt("user_id");
+            userName = resultSet.getString("name");
+            System.out.println("Login Successful!!!");
+            System.out.println("== Welcome, " + userName + " ==");
+
+            displayBalance();
+            showTransactionMenu();
+         } else {
+            System.out.println("Invalid email or password.");
+         }
+      } catch (SQLException e) {
+         System.out.println("Error logging in.");
+         e.printStackTrace();
+      }
+   }
+
+   private static void displayBalance() {
+      try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD)) {
+         String query = "SELECT balance FROM Account_Balance WHERE user_id = ?";
+         PreparedStatement stmt = conn.prepareStatement(query);
+         stmt.setInt(1, userId);
+
+         ResultSet resultSet = stmt.executeQuery();
+         if (resultSet.next()) {
+            double balance = resultSet.getDouble("balance");
+            System.out.printf("Balance: %.2f%n", balance);
+         }
+      } catch (SQLException e) {
+         System.out.println("Error retrieving balance.");
+         e.printStackTrace();
+      }
+   }
+
+   private static void debitTransaction(double amount, String description) {
+      try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD)) {
+         String balanceQuery = "UPDATE Account_Balance SET balance = balance + ? WHERE user_id = ?";
+         PreparedStatement balanceStmt = conn.prepareStatement(balanceQuery);
+         balanceStmt.setDouble(1, amount);
+         balanceStmt.setInt(2, userId);
+         balanceStmt.executeUpdate();
+
+         String transactionQuery = "INSERT INTO Transactions (user_id, transaction_type, amount, description) VALUES (?, 'debit', ?, ?)";
+         PreparedStatement transactionStmt = conn.prepareStatement(transactionQuery);
+         transactionStmt.setInt(1, userId);
+         transactionStmt.setDouble(2, amount);
+         transactionStmt.setString(3, description);
+         transactionStmt.executeUpdate();
+
+         System.out.println("Debit Successfully Recorded!");
+         displayBalance();
+      } catch (SQLException e) {
+         System.out.println("Error processing debit transaction.");
+         e.printStackTrace();
+      }
+   }
+
+   private static void creditTransaction(double amount, String description) {
+      try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD)) {
+         String balanceQuery = "UPDATE Account_Balance SET balance = balance - ? WHERE user_id = ?";
+         PreparedStatement balanceStmt = conn.prepareStatement(balanceQuery);
+         balanceStmt.setDouble(1, amount);
+         balanceStmt.setInt(2, userId);
+         balanceStmt.executeUpdate();
+
+         String transactionQuery = "INSERT INTO Transactions (user_id, transaction_type, amount, description) VALUES (?, 'credit', ?, ?)";
+         PreparedStatement transactionStmt = conn.prepareStatement(transactionQuery);
+         transactionStmt.setInt(1, userId);
+         transactionStmt.setDouble(2, amount);
+         transactionStmt.setString(3, description);
+         transactionStmt.executeUpdate();
+
+         System.out.println("Credit Successfully Recorded!");
+         displayBalance();
+      } catch (SQLException e) {
+         System.out.println("Error processing credit transaction.");
+         e.printStackTrace();
+      }
+   }
+
+   private static void viewTransactionHistory() {
+      String query = "SELECT date, description, transaction_type, amount FROM Transactions WHERE user_id = ? ORDER BY date DESC";
+      double runningBalance = 0.0;
+
+      try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+           PreparedStatement stmt = conn.prepareStatement(query)) {
+           
+         stmt.setInt(1, userId);
+         ResultSet rs = stmt.executeQuery();
+         
+         System.out.println("== History ==");
+         System.out.println("Date       | Description       | Debit     | Credit    | Balance");
+
+         while (rs.next()) {
+            String date = rs.getDate("date").toString();
+            String description = rs.getString("description");
+            String type = rs.getString("transaction_type");
+            double amount = rs.getDouble("amount");
+            
+            if (type.equals("debit")) {
+               runningBalance += amount;
+               System.out.printf("%-10s | %-15s | %-9.2f | %-9s | %-9.2f\n", date, description, amount, "", runningBalance);
+            } else {
+               runningBalance -= amount;
+               System.out.printf("%-10s | %-15s | %-9s | %-9.2f | %-9.2f\n", date, description, "", amount, runningBalance);
+            }
+         }
+         exportToCSV();
+
+      } catch (SQLException e) {
+         System.out.println("Error retrieving transaction history.");
+         e.printStackTrace();
+      }
+   }
+
+   private static void exportToCSV() {
+      Scanner scanner = new Scanner(System.in);
+      System.out.print("Export to CSV? (y/n): ");
+      if (!scanner.nextLine().equalsIgnoreCase("y")) return;
+
+      String query = "SELECT date, description, transaction_type, amount FROM Transactions WHERE user_id = ? ORDER BY date DESC";
+      double runningBalance = 0.0;
+
+      try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
+           PreparedStatement stmt = conn.prepareStatement(query);
+           FileWriter writer = new FileWriter("TransactionHistory.csv")) {
+           
+         stmt.setInt(1, userId);
+         ResultSet rs = stmt.executeQuery();
+
+         writer.append("Date,Description,Debit,Credit,Balance\n");
+         while (rs.next()) {
+            String date = rs.getDate("date").toString();
+            String description = rs.getString("description");
+            String type = rs.getString("transaction_type");
+            double amount = rs.getDouble("amount");
+
+            if (type.equals("debit")) {
+               runningBalance += amount;
+               writer.append(String.format("%s,%s,%.2f,,%.2f\n", date, description, amount, runningBalance));
+            } else {
+               runningBalance -= amount;
+               writer.append(String.format("%s,%s,,%.2f,%.2f\n", date, description, amount, runningBalance));
+            }
+         }
+         System.out.println("File exported.");
+
+      } catch (SQLException | IOException e) {
+         System.out.println("Error exporting transaction history to CSV.");
+         e.printStackTrace();
+      }
+   }
+
+   private static void showTransactionMenu() {
+      Scanner scanner = new Scanner(System.in);
+      int option;
+      do {
+         System.out.println("1. Credit");
+         System.out.println("2. Debit");
+         System.out.println("3. History");
+         System.out.println("4. Savings");
+         System.out.println("5. Credit Loan");
+         System.out.println("6. Deposit Interest Predictor");
+         System.out.println("7. Logout");
+         System.out.print("Choose an option: ");
+         option = scanner.nextInt();
+         scanner.nextLine();
+
+         switch (option) {
+            case 1 -> {
+               System.out.print("Enter amount to credit: ");
+               double amount = scanner.nextDouble();
+               scanner.nextLine();
+               System.out.print("Enter description: ");
+               String description = scanner.nextLine();
+               creditTransaction(amount, description);
+            }
+            case 2 -> {
+               System.out.print("Enter amount to debit: ");
+               double amount = scanner.nextDouble();
+               scanner.nextLine();
+               System.out.print("Enter description: ");
+               String description = scanner.nextLine();
+               debitTransaction(amount, description);
+            }
+            case 3 -> viewTransactionHistory();
+            case 7 -> {
+               System.out.println("Thank you for using our service."); 
+               System.exit(0);
+            }
+            default -> System.out.println("Invalid option.Please select from 1 to 7");
+         }
+      } while (option != 4);
+   }
+
+   public static void main(String[] args) {
+      Scanner scanner = new Scanner(System.in);
+      int option;
+
+      do {
+         System.out.println("1. Login");
+         System.out.println("2. Register");
+         System.out.print("Choose an option: ");
+         option = scanner.nextInt();
+         scanner.nextLine();
+
+         switch (option) {
+            case 1 -> loginUser();
+            case 2 -> registerUser();
+            default -> System.out.println("Invalid option.");
+         }
+      } while (true);
+   }
+}
